@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Priority Scheduling Game - Keyboard Accessible</title>
+<style>
+  /* 🎨 [Your existing CSS remains unchanged] */
+  body {
+    font-family: Arial, sans-serif;
+    background: #1e1b2f;
+    color: #eee;
+    margin: 0;
+    padding: 1rem;
+    user-select: none;
+  }
+  h1 {
+    text-align: center;
+    margin-bottom: 0.5rem;
+  }
+  #infoBar {
+    display: flex;
+    justify-content: space-around;
+    margin-bottom: 1rem;
+    font-size: 1.2rem;
+  }
+  #gameContainer {
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  #instructions {
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    color: #ccc;
+    text-align: center;
+  }
+  #processPool, #cpuTimeline {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .processCard {
+    background: #7c3aed;
+    padding: 10px;
+    border-radius: 8px;
+    width: 100px;
+    cursor: pointer;
+    user-select: none;
+    box-shadow: 0 0 10px #7c3aed88;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    outline-offset: 3px;
+    outline: none;
+  }
+  .processCard:focus {
+    outline: 3px solid #ffb347;
+  }
+  .processId {
+    font-weight: bold;
+    font-size: 1.3rem;
+  }
+  .prioBurst {
+    font-size: 0.85rem;
+    text-align: center;
+    margin-top: 4px;
+  }
+  .cpuSlot {
+    width: 110px;
+    height: 70px;
+    background: #312e49;
+    border: 2px dashed #666;
+    border-radius: 8px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    user-select: none;
+    position: relative;
+  }
+  .cpuSlot.filled {
+    border-style: solid;
+    border-color: #7c3aed;
+  }
+  .cpuSlot:focus {
+    outline: 3px solid #ffb347;
+    outline-offset: 3px;
+  }
+  button {
+    background: #7c3aed;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    color: white;
+    font-size: 1rem;
+    cursor: pointer;
+    margin: 0 0.5rem;
+    user-select: none;
+  }
+  button:disabled {
+    background: #555;
+    cursor: not-allowed;
+  }
+  #message {
+    margin-top: 1rem;
+    text-align: center;
+    font-size: 1.1rem;
+    min-height: 1.5rem;
+  }
+  #ganttChart {
+    margin-top: 1.5rem;
+    background: #272544;
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: #eee;
+    font-weight: bold;
+  }
+  .gantt-bar {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-radius: 4px;
+    padding: 4px 0;
+    font-size: 0.85rem;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+  <div id="gameContainer" role="main">
+    <h1>Priority Scheduling Game</h1>
+    <div id="infoBar" aria-live="polite">
+      <div id="timer" tabindex="0">⏳ Time: 60</div>
+      <div id="score" tabindex="0">⭐ Score: 0</div>
+      <div id="level" tabindex="0">🚀 Level: 1</div>
+    </div>
+
+    <div id="instructions" tabindex="0">
+      Use <strong>Tab</strong> to navigate processes and CPU slots.<br/>
+      Select a process, press <strong>Enter</strong> or <strong>Space</strong> to pick it up.<br/>
+      Then tab to a CPU slot and press <strong>Enter</strong> or <strong>Space</strong> to place it.<br/>
+      Click <em>Run Scheduling</em> to start.
+    </div>
+
+    <div id="processPool" aria-label="Available Processes" role="list" tabindex="0"></div>
+    <div id="cpuTimeline" aria-label="CPU Timeline Slots" role="list" tabindex="0"></div>
+
+    <div style="text-align:center; margin-top: 1rem;">
+      <button id="runBtn" aria-label="Run Scheduling">Run Scheduling</button>
+      <button id="nextLevelBtn" aria-label="Next Level" hidden>Next Level</button>
+    </div>
+
+    <div id="message" role="alert" aria-live="assertive"></div>
+    <div id="ganttChart" aria-label="Gantt Chart" style="display:none;"></div>
+  </div>
+
+<script>
+(() => {
+  'use strict';
+
+  const BASE_TIME = 100;
+  const MAX_LEVEL = 5;
+  let SLOT_COUNT = 0; // ✅ Changed from const to let
+
+  const processPool = document.getElementById('processPool');
+  const cpuTimeline = document.getElementById('cpuTimeline');
+  const runBtn = document.getElementById('runBtn');
+  const nextLevelBtn = document.getElementById('nextLevelBtn');
+  const timerEl = document.getElementById('timer');
+  const scoreEl = document.getElementById('score');
+  const levelEl = document.getElementById('level');
+  const messageEl = document.getElementById('message');
+  const ganttChart = document.getElementById('ganttChart');
+
+  let processes = [];
+  let assignedProcesses = [];
+  let timer = BASE_TIME;
+  let timerInterval = null;
+  let score = 0;
+  let level = 1;
+  let running = false;
+  let pickedProcessId = null;
+
+  function randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+  function clearChildren(el) {
+    while (el.firstChild) el.removeChild(el.firstChild);
+  }
+  function createProcess(id, priority, burst) {
+    return { id, priority, burst, remaining: burst };
+  }
+  function processColor(priority) {
+    const colors = {
+      1: '#d50000',
+      2: '#f4511e',
+      3: '#fbc02d',
+      4: '#388e3c',
+      5: '#1976d2'
+    };
+    return colors[priority] || '#7c3aed';
+  }
+  function updateInfo() {
+    timerEl.textContent = `⏳ Time: ${timer}`;
+    scoreEl.textContent = `⭐ Score: ${score}`;
+    levelEl.textContent = `🚀 Level: ${level}`;
+  }
+  function showMessage(text, color = '#eee') {
+    messageEl.textContent = text;
+    messageEl.style.color = color;
+  }
+  function clearMessage() {
+    messageEl.textContent = '';
+  }
+
+  function generateProcesses(num) {
+    processes = [];
+    for(let i=1; i<=num; i++) {
+      const priority = randomInt(1, 5);
+      const burst = randomInt(1 + level, 5 + level * 2);
+      processes.push(createProcess(`P${i}`, priority, burst));
+    }
+  }
+
+  function renderProcessPool() {
+    clearChildren(processPool);
+    processes.forEach(proc => {
+      if (assignedProcesses.find(p => p && p.id === proc.id)) return;
+
+      const card = document.createElement('div');
+      card.className = 'processCard';
+      card.tabIndex = 0;
+      card.id = `proc-${proc.id}`;
+      card.dataset.id = proc.id;
+      card.dataset.type = 'pool';
+      card.style.background = `linear-gradient(145deg, ${processColor(proc.priority)}, #7c3aed)`;
+      card.innerHTML = `
+        <div class="processId">${proc.id}</div>
+        <div class="prioBurst">Priority: ${proc.priority}<br>Burst: ${proc.burst}s</div>
+      `;
+      processPool.appendChild(card);
+      card.addEventListener('keydown', handleCardKeyDown);
+      card.addEventListener('click', () => {
+        pickProcess(proc.id);
+      });
+    });
+  }
+
+  function renderCPUSlots() {
+    clearChildren(cpuTimeline);
+    for(let i=0; i < SLOT_COUNT; i++) {
+      const slot = document.createElement('div');
+      slot.className = 'cpuSlot';
+      slot.tabIndex = 0;
+      slot.dataset.slotIndex = i;
+      const proc = assignedProcesses[i];
+      if(proc) {
+        slot.classList.add('filled');
+        slot.style.borderColor = processColor(proc.priority);
+        slot.textContent = proc.id;
+        slot.dataset.procId = proc.id;
+      } else {
+        slot.classList.remove('filled');
+        slot.style.borderColor = '#666';
+        slot.textContent = 'Empty';
+        slot.dataset.procId = '';
+      }
+      cpuTimeline.appendChild(slot);
+
+      slot.addEventListener('keydown', handleSlotKeyDown);
+      slot.addEventListener('click', () => {
+        placeProcess(i);
+      });
+    }
+  }
+
+  function handleCardKeyDown(e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      pickProcess(e.currentTarget.dataset.id);
+    }
+  }
+  function handleSlotKeyDown(e) {
+    if ((e.key === 'Enter' || e.key === ' ') && pickedProcessId) {
+      e.preventDefault();
+      placeProcess(parseInt(e.currentTarget.dataset.slotIndex));
+    }
+  }
+
+  function pickProcess(procId) {
+    if (running) return;
+    pickedProcessId = pickedProcessId === procId ? null : procId;
+    updateHighlight();
+    if (pickedProcessId)
+      showMessage(`Picked up ${procId}. Now select a CPU slot to place it.`);
+    else
+      clearMessage();
+  }
+
+  function placeProcess(slotIndex) {
+    if (running || !pickedProcessId) return showMessage('Pick a process first!', 'orange');
+
+    let proc = processes.find(p => p.id === pickedProcessId)
+      || assignedProcesses.find(p => p && p.id === pickedProcessId);
+    if (!proc) return showMessage(`Process ${pickedProcessId} not found`, 'crimson');
+
+    assignedProcesses = assignedProcesses.map(p => (p && p.id === pickedProcessId) ? null : p);
+    processes = processes.filter(p => p.id !== pickedProcessId);
+
+    if (assignedProcesses[slotIndex]) {
+      processes.push(assignedProcesses[slotIndex]);
+    }
+
+    assignedProcesses[slotIndex] = proc;
+    pickedProcessId = null;
+    clearMessage();
+
+    renderProcessPool();
+    renderCPUSlots();
+    updateHighlight();
+  }
+
+  function updateHighlight() {
+    document.querySelectorAll('.processCard').forEach(card => {
+      card.style.outline = card.dataset.id === pickedProcessId ? '3px solid #ffb347' : '';
+    });
+    document.querySelectorAll('.cpuSlot').forEach(slot => {
+      const slotProc = assignedProcesses[slot.dataset.slotIndex];
+      slot.style.outline = (slotProc && slotProc.id === pickedProcessId) ? '3px solid #ffb347' : '';
+    });
+  }
+
+  async function runScheduling() {
+    if (running) return;
+    running = true;
+    runBtn.disabled = true;
+    nextLevelBtn.hidden = true;
+    clearMessage();
+    ganttChart.style.display = 'flex';
+    ganttChart.innerHTML = '';
+
+    let scheduledProcs = assignedProcesses.filter(p => p !== null);
+    if (scheduledProcs.length === 0) {
+      showMessage("Assign at least one process to CPU slots to run!", 'crimson');
+      running = false;
+      runBtn.disabled = false;
+      ganttChart.style.display = 'none';
+      return;
+    }
+
+    let procs = scheduledProcs.map(p => ({...p, remaining: p.burst}));
+    let time = 0;
+    let timelineSegments = [];
+
+    while (procs.some(p => p.remaining > 0)) {
+      let ready = procs.filter(p => p.remaining > 0);
+      ready.sort((a,b) => a.priority - b.priority);
+      let current = ready[0];
+      if (!current) break;
+      await animateProcess(current, time);
+
+      if (timelineSegments.length > 0 && timelineSegments[timelineSegments.length - 1].id === current.id) {
+        timelineSegments[timelineSegments.length - 1].end++;
+      } else {
+        timelineSegments.push({id: current.id, start: time, end: time + 1, color: processColor(current.priority)});
+      }
+
+      current.remaining--;
+      time++;
+    }
+
+    let totalBurst = procs.reduce((sum,p) => sum + p.burst, 0);
+    let finishTime = time;
+    let totalWaiting = procs.reduce((sum,p) => sum + (finishTime - p.burst), 0);
+    let efficiency = Math.max(0, Math.floor(1000 / (totalWaiting + 1)));
+
+    score += efficiency;
+    updateInfo();
+    showMessage(`Level Completed! Efficiency Score: ${efficiency}`, '#388e3c');
+
+    renderGanttChart(timelineSegments);
+
+    running = false;
+    nextLevelBtn.hidden = false;
+  }
+
+  function animateProcess(proc) {
+    return new Promise(resolve => {
+      const slotIndex = assignedProcesses.findIndex(p => p && p.id === proc.id);
+      if (slotIndex >= 0) {
+        const slot = cpuTimeline.children[slotIndex];
+        slot.style.boxShadow = '0 0 15px 4px #ffb347aa';
+        setTimeout(() => {
+          slot.style.boxShadow = '';
+          resolve();
+        }, 1000);
+      } else {
+        setTimeout(() => resolve(), 1000);
+      }
+    });
+  }
+
+  function renderGanttChart(segments) {
+    ganttChart.innerHTML = '';
+
+    const barsContainer = document.createElement('div');
+    barsContainer.style.display = 'flex';
+    barsContainer.style.gap = '4px';
+    barsContainer.style.marginBottom = '6px';
+
+    const timeRow = document.createElement('div');
+    timeRow.style.display = 'flex';
+    timeRow.style.gap = '4px';
+    timeRow.style.fontSize = '0.75rem';
+    timeRow.style.color = '#ccc';
+    timeRow.style.fontFamily = 'monospace';
+
+    let currentTime = 0;
+
+    segments.forEach(seg => {
+      const duration = seg.end - seg.start;
+
+      const bar = document.createElement('div');
+      bar.className = 'gantt-bar';
+      bar.textContent = seg.id;
+      bar.style.background = seg.color;
+      bar.style.flex = duration;
+      bar.title = `Start: ${seg.start}s, End: ${seg.end}s`;
+      barsContainer.appendChild(bar);
+
+      const label = document.createElement('div');
+      label.textContent = `${currentTime}s`;
+      label.style.flex = duration;
+      label.style.textAlign = 'left';
+      timeRow.appendChild(label);
+
+      currentTime += duration;
+    });
+
+    ganttChart.appendChild(barsContainer);
+    ganttChart.appendChild(timeRow);
+  }
+
+  function initLevel(lvl) {
+    timer = BASE_TIME - (lvl - 1) * 5;
+    if (timer < 20) timer = 20;
+    score = 0;
+    level = lvl;
+
+    generateProcesses(7 + lvl * 2);
+    SLOT_COUNT = processes.length; // ✅ Adjust slots to process count
+    assignedProcesses = Array(SLOT_COUNT).fill(null);
+
+    renderProcessPool();
+    renderCPUSlots();
+    updateInfo();
+    clearMessage();
+    ganttChart.style.display = 'none';
+    nextLevelBtn.hidden = true;
+    runBtn.disabled = false;
+    pickedProcessId = null;
+    updateHighlight();
+
+    if (timerInterval) clearInterval(timerInterval);
+    startTimer();
+  }
+
+  function startTimer() {
+    if (timerInterval) clearInterval(timerInterval);
+    timerEl.textContent = `⏳ Time: ${timer}`;
+    timerInterval = setInterval(() => {
+      timer--;
+      timerEl.textContent = `⏳ Time: ${timer}`;
+      if (timer <= 0) {
+        clearInterval(timerInterval);
+        runBtn.disabled = true;
+        nextLevelBtn.hidden = true;
+        showMessage(`Time's up! Your final score: ${score}`, 'crimson');
+        running = false;
+      }
+    }, 1000);
+  }
+
+  nextLevelBtn.addEventListener('click', () => {
+    if (level >= MAX_LEVEL) {
+      showMessage("Congrats! You've completed all levels!", '#4caf50');
+      nextLevelBtn.hidden = true;
+      runBtn.disabled = true;
+      return;
+    }
+    initLevel(level + 1);
+  });
+
+  runBtn.addEventListener('click', () => {
+    if (timer <= 0) {
+      showMessage("Time is up! Start a new game.", 'crimson');
+      return;
+    }
+    runScheduling();
+  });
+
+  initLevel(1);
+})();
+</script>
+</body>
+</html>
