@@ -42,7 +42,6 @@ JavaScript (Vanilla JS)
 
 🌐 Live Demo
 
-Once GitHub Pages is enabled, your game will be live at:
-
-https://ShambhaviSeth0403.github.io/Priority_Scheduling_Game/
+🌐 **Live Demo**  
+Check out the game here: [Priority Scheduling Game](https://shambhaviseth0403.github.io/Priority-Scheduling-Game/)
 
